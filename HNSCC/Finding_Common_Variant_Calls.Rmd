@@ -1,0 +1,234 @@
+---
+title: "Finding_Common_Variant_Calls"
+author: "Ji-Qing Chen"
+date: "2023-04-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(maftools)
+library(tidyverse)
+library(ggplot2)
+
+library(viridis)
+```
+
+# load data
+```{r}
+Merged_MAF <- read.maf("/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/merged_mafs_files_maftools.maf")
+Merged_MAF_df <- Merged_MAF@data
+
+PDO_01769 <- Merged_MAF_df %>% 
+             filter(Center == "PDO_01769") %>%
+             select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                    Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+PDO_18243 <- Merged_MAF_df %>% 
+             filter(Center == "PDO_18243") %>%
+             select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                    Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+PDO_HN85 <- Merged_MAF_df %>% 
+            filter(Center == "PDO_HN85") %>%
+            select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                   Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+PDO_HN142 <- Merged_MAF_df %>% 
+             filter(Center == "PDO_HN142") %>%
+             select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                    Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+PDO_HN143 <- Merged_MAF_df %>% 
+             filter(Center == "PDO_HN143") %>%
+             select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                    Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+PDO_RS4548 <- Merged_MAF_df %>% 
+              filter(Center == "PDO_RS4548") %>%
+              select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                     Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+PDO_RS5650 <- Merged_MAF_df %>% 
+              filter(Center == "PDO_RS5650") %>%
+              select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                     Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_01769 <- Merged_MAF_df %>% 
+               filter(Center == "Tumor_01769") %>%
+               select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                      Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_18243 <- Merged_MAF_df %>% 
+               filter(Center == "Tumor_18243") %>%
+               select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                      Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_HN85 <- Merged_MAF_df %>% 
+              filter(Center == "Tumor_HN85") %>%
+              select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                     Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_HN142 <- Merged_MAF_df %>% 
+               filter(Center == "Tumor_HN142") %>%
+               select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                      Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_HN143 <- Merged_MAF_df %>% 
+               filter(Center == "Tumor_HN143") %>%
+               select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                      Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_RS4548 <- Merged_MAF_df %>% 
+                filter(Center == "Tumor_RS4548") %>%
+                select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                       Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_RS5650 <- Merged_MAF_df %>% 
+                filter(Center == "Tumor_RS5650") %>%
+                select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                       Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+```
+
+# Find common for each sample
+```{r}
+Common_01769 <- inner_join(PDO_01769, Tumor_01769)
+Common_18243 <- inner_join(PDO_18243, Tumor_18243)
+Common_HN85 <- inner_join(PDO_HN85, Tumor_HN85)
+Common_HN142 <- inner_join(PDO_HN142, Tumor_HN142)
+Common_HN143 <- inner_join(PDO_HN143, Tumor_HN143)
+Common_RS4548 <- inner_join(PDO_RS4548, Tumor_RS4548)
+Common_RS5650 <- inner_join(PDO_RS5650, Tumor_RS5650)
+```
+
+# Data Clean
+```{r}
+Sample <- c(rep("01769", 3), rep("18243", 3), rep("HN85", 3), rep("HN142", 3), rep("HN143", 3), rep("RS4548", 3), rep("RS5650", 3))
+Type <- rep(c("Tumor tissue" , "PDO" , "Common") , 7)
+Variant_Counts <- c(nrow(Tumor_01769)-nrow(Common_01769), nrow(PDO_01769)-nrow(Common_01769), nrow(Common_01769), nrow(Tumor_18243)-nrow(Common_18243), nrow(PDO_18243)-nrow(Common_18243), nrow(Common_18243), nrow(Tumor_HN85)-nrow(Common_HN85), nrow(PDO_HN85)-nrow(Common_HN85), nrow(Common_HN85), nrow(Tumor_HN142)-nrow(Common_HN142), nrow(PDO_HN142)-nrow(Common_HN142), nrow(Common_HN142), nrow(Tumor_HN143)-nrow(Common_HN143), nrow(PDO_HN143)-nrow(Common_HN143), nrow(Common_HN143), nrow(Tumor_RS4548)-nrow(Common_RS4548), nrow(PDO_RS4548)-nrow(Common_RS4548), nrow(Common_RS4548), nrow(Tumor_RS5650)-nrow(Common_RS5650), nrow(PDO_RS5650)-nrow(Common_RS5650), nrow(Common_RS5650))
+
+data <- data.frame(Sample,Type,Variant_Counts)
+write.csv(data, file = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/Tables/Number_of_Variant_Calls_Per_Samples.csv")
+```
+
+# Plots
+```{r}
+ggplot(data, aes(fill=Type, y=Variant_Counts, x=Sample)) + 
+    geom_bar(position="stack", stat="identity") +
+    scale_fill_viridis(discrete = T) +
+    theme_classic()+
+    ylab("Number of Variant Calls Per Samples") +
+    xlab("")
+# 4 x 8
+```
+
+_______________________________________
+
+# Only for SNP
+
+# load data
+```{r}
+Merged_MAF <- read.maf("/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/merged_mafs_files_maftools.maf")
+Merged_MAF_df <- Merged_MAF@data %>% filter(Variant_Type == "SNP")
+
+PDO_01769 <- Merged_MAF_df %>% 
+             filter(Center == "PDO_01769") %>%
+             select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                    Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+PDO_18243 <- Merged_MAF_df %>% 
+             filter(Center == "PDO_18243") %>%
+             select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                    Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+PDO_HN85 <- Merged_MAF_df %>% 
+            filter(Center == "PDO_HN85") %>%
+            select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                   Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+PDO_HN142 <- Merged_MAF_df %>% 
+             filter(Center == "PDO_HN142") %>%
+             select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                    Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+PDO_HN143 <- Merged_MAF_df %>% 
+             filter(Center == "PDO_HN143") %>%
+             select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                    Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+PDO_RS4548 <- Merged_MAF_df %>% 
+              filter(Center == "PDO_RS4548") %>%
+              select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                     Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+PDO_RS5650 <- Merged_MAF_df %>% 
+              filter(Center == "PDO_RS5650") %>%
+              select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                     Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_01769 <- Merged_MAF_df %>% 
+               filter(Center == "Tumor_01769") %>%
+               select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                      Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_18243 <- Merged_MAF_df %>% 
+               filter(Center == "Tumor_18243") %>%
+               select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                      Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_HN85 <- Merged_MAF_df %>% 
+              filter(Center == "Tumor_HN85") %>%
+              select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                     Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_HN142 <- Merged_MAF_df %>% 
+               filter(Center == "Tumor_HN142") %>%
+               select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                      Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_HN143 <- Merged_MAF_df %>% 
+               filter(Center == "Tumor_HN143") %>%
+               select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                      Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_RS4548 <- Merged_MAF_df %>% 
+                filter(Center == "Tumor_RS4548") %>%
+                select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                       Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+
+Tumor_RS5650 <- Merged_MAF_df %>% 
+                filter(Center == "Tumor_RS5650") %>%
+                select(Entrez_Gene_Id, Chromosome, Start_Position, 
+                       Variant_Type, Reference_Allele, Tumor_Seq_Allele2)
+```
+
+# Find common for each sample
+```{r}
+Common_01769 <- inner_join(PDO_01769, Tumor_01769)
+Common_18243 <- inner_join(PDO_18243, Tumor_18243)
+Common_HN85 <- inner_join(PDO_HN85, Tumor_HN85)
+Common_HN142 <- inner_join(PDO_HN142, Tumor_HN142)
+Common_HN143 <- inner_join(PDO_HN143, Tumor_HN143)
+Common_RS4548 <- inner_join(PDO_RS4548, Tumor_RS4548)
+Common_RS5650 <- inner_join(PDO_RS5650, Tumor_RS5650)
+```
+
+# Data Clean
+```{r}
+Sample <- c(rep("01769", 3), rep("18243", 3), rep("HN85", 3), rep("HN142", 3), rep("HN143", 3), rep("RS4548", 3), rep("RS5650", 3))
+Type <- rep(c("Tumor tissue" , "PDO" , "Common") , 7)
+Variant_Counts <- c(nrow(Tumor_01769)-nrow(Common_01769), nrow(PDO_01769)-nrow(Common_01769), nrow(Common_01769), nrow(Tumor_18243)-nrow(Common_18243), nrow(PDO_18243)-nrow(Common_18243), nrow(Common_18243), nrow(Tumor_HN85)-nrow(Common_HN85), nrow(PDO_HN85)-nrow(Common_HN85), nrow(Common_HN85), nrow(Tumor_HN142)-nrow(Common_HN142), nrow(PDO_HN142)-nrow(Common_HN142), nrow(Common_HN142), nrow(Tumor_HN143)-nrow(Common_HN143), nrow(PDO_HN143)-nrow(Common_HN143), nrow(Common_HN143), nrow(Tumor_RS4548)-nrow(Common_RS4548), nrow(PDO_RS4548)-nrow(Common_RS4548), nrow(Common_RS4548), nrow(Tumor_RS5650)-nrow(Common_RS5650), nrow(PDO_RS5650)-nrow(Common_RS5650), nrow(Common_RS5650))
+
+data <- data.frame(Sample,Type,Variant_Counts)
+write.csv(data, file = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/Tables/Number_of_SNV_Per_Samples.csv")
+```
+
+# Plots
+```{r}
+ggplot(data, aes(fill=Type, y=Variant_Counts, x=Sample)) + 
+    geom_bar(position="stack", stat="identity") +
+    scale_fill_viridis(discrete = T) +
+    theme_classic()+
+    ylab("Number of SNVs") +
+    xlab("")
+# 4 x 8
+```
+

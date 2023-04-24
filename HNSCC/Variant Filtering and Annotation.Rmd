@@ -1,0 +1,140 @@
+---
+title: "Variant Filtering and Annotation"
+author: "Ji-Qing Chen"
+date: "2023-03-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Activate conda environment (in discovery)
+```{bash}
+source /optnfs/common/miniconda3/etc/profile.d/conda.sh
+
+conda activate mytest
+```
+
+______________________________________________________
+
+# Identify and apply empirical thresholds for false-positive variant filtering
+```{bash}
+# 12.3 mins
+apps/gatk-4.3.0.0/gatk FilterMutectCalls -R /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa -V /scratch/F0034WQ_temp/results/raw_variants.vcf -O /scratch/F0034WQ_temp/results/filtered_variants.vcf
+```
+
+# Calls that are likely true positives get the PASS label in the FILTER field, and calls that are likely false positives are labeled with the reason(s) for filtering in the FILTER field of the VCF. 
+```{bash}
+# view the available filters in the VCF header
+zgrep '##FILTER' /scratch/F0034WQ_temp/results/filtered_variants.vcf
+
+# This step applies 20 filters, including contamination. However, if an annotation a filter relies on is absent, the tool skips the particular filtering. The filter will still appear in the header.
+```
+
+______________________________________________________
+
+# Use Bcftools to filt
+
+## filter variants without PASS from FilterMutectCalls
+```{bash}
+bcftools view -f PASS /scratch/F0034WQ_temp/results/filtered_variants.vcf > /scratch/F0034WQ_temp/results/filtered-PASS.vcf
+# view: subset and filter VCF or BCF files by position and filtering expression. Convert between VCF and BCF. Former bcftools subset.
+# -f LIST = --apply-filters LIST: Skip sites where FILTER column does not contain any of the strings listed in LIST. For example, to include only sites which have no filters set, use -f PASS.
+```
+
+## filter for read coverage at each position (Filter for variants with read depth >= 20)
+```{bash}
+bcftools filter -i 'FORMAT/DP >= 20' /scratch/F0034WQ_temp/results/filtered-PASS.vcf > /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.vcf
+# filter: Apply fixed-threshold filters.
+# -i = --include EXPRESSION: include only sites for which EXPRESSION is true.
+```
+
+## filter for alt allele freq of 5 percent or greater
+```{bash}
+bcftools filter -i 'FORMAT/AF >= 0.05' /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.vcf > /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.vcf
+```
+
+## filter for read depth of alt allele to have at least 5 reads in support
+```{bash}
+bcftools filter -i 'FORMAT/AD[0:1] >= 5' /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.vcf | bgzip -c > /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.vcf.gz && /dartfs-hpc/rc/home/q/f0034wq/.conda/envs/mytest/bin/tabix -fp vcf /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.vcf.gz
+
+# tabix: Generic indexer for TAB-delimited genome position files.Tabix is the first generic tool that indexes position sorted files in TAB-delimited formats such as GFF, BED, PSL, SAM and SQL export, and quickly retrieves features overlapping specified regions.
+
+# Install bgzip: conda install -n mytest tabix
+
+# bgzip: It compresses files in a similar manner to, and compatible with, gzip(1). The file is compressed into a series of small (less than 64K) 'BGZF' blocks. This allows indexes to be built against the compressed file and used to retrieve portions of the data without having to decompress the entire file.
+
+# bgzip -c, --comment: Skip lines started with character CHAR. [#]
+
+# bgzip -f, --force: Force to overwrite the index file if it is present.
+
+# bgzip -p, --preset: Input format for indexing. Valid values are: gff, bed, sam, vcf. This option should not be applied together with any of -s, -b, -e, -c and -0; it is not used for data retrieval because this setting is stored in the index file.
+```
+
+## remove calls on unlocalized/unplaced hg38 scaffolds or sex chromosomes or chrMT
+```{bash}
+bcftools view /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.vcf.gz -Oz -o /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.vcf.gz --regions chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr20,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22
+
+/dartfs-hpc/rc/home/q/f0034wq/.conda/envs/mytest/bin/tabix -fp vcf /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.vcf.gz
+```
+
+## filter against known repeat regions (repeatmasker) for hg38
+```{bash}
+bedtools intersect -v -wa -a /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.vcf.gz -b /dartfs-hpc/rc/home/q/f0034wq/repeatMasker.hg38.bed > /scratch/F0034WQ_temp/results/tmp.rep-mask-f.out.vcf
+
+# repeatMasker.hg38.bed was download based on: http://genome.ucsc.edu/cgi-bin/hgTables
+# "Repeats" group and "Repeatmasker" track. Fill output filename. Select output format as BED.
+```
+
+## add header back into VCF file
+```{bash}
+cat <(bcftools view /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.vcf.gz | grep "^#") /scratch/F0034WQ_temp/results/tmp.rep-mask-f.out.vcf > /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.RepeatM-f.vcf
+```
+
+## count variants filtered at each step and write to file
+```{bash}
+paste <(cat /scratch/F0034WQ_temp/results/filtered-PASS.vcf | grep -v "^#" | wc -l) <(cat /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.vcf | grep -v "^#" | wc -l) <(cat /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.vcf | grep -v "^#" | wc -l ) <(bcftools view /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.vcf.gz  | grep -v "^#" | wc -l ) <(bcftools view /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.vcf.gz | grep -v "^#" | wc -l ) <(cat /scratch/F0034WQ_temp/results/tmp.rep-mask-f.out.vcf | grep -v "^#" | wc -l) > /scratch/F0034WQ_temp/results/filtering.summary-tmp.txt
+
+echo -e "PASS\tDP-20\tAF-0.05\tAD-5\tmajor-contigs\trepeatMasker" | cat - /scratch/F0034WQ_temp/results/filtering.summary-tmp.txt > /scratch/F0034WQ_temp/results/filtering.summary.txt
+```
+
+## remove temp files
+```{bash}
+rm -rf /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.vcf
+rm -rf /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.vcf
+rm -rf /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.vcf.gz
+rm -rf /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.vcf.gz.tbi
+rm -rf /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.vcf.gz
+rm -rf /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.vcf.gz.tbi
+rm -rf /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.vcf
+rm -rf /scratch/F0034WQ_temp/results/tmp.rep-mask-f.out.vcf
+rm -rf /scratch/F0034WQ_temp/results/filtering.summary-tmp.txt
+```
+
+______________________________________________________
+
+# Variant annotation using Functotator (GATK)
+
+## Download the prepackage data sources that come with Functotator (Only do it for the first time)
+```{bash}
+# https://gatk.broadinstitute.org/hc/en-us/articles/360035889931-Funcotator-Information-and-Tutorial
+# 29 GB
+cd /scratch/F0034WQ_temp/Funcotator_prepackaged_sources
+
+/dartfs-hpc/rc/home/q/f0034wq/apps/gatk-4.3.0.0/gatk FuncotatorDataSourceDownloader --somatic --validate-integrity --extract-after-download
+
+# in funcotator_dataSources.v1.7.20200521s folder, Functotator uses gencode as a data sources by default. It also uses clinvar as well as gnomAD to annotate the variance
+```
+
+## Run Funcotator
+```{bash}
+# Final callsets in VCF format (4 mins)
+apps/gatk-4.3.0.0/gatk Funcotator --variant /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.RepeatM-f.vcf --reference /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa --ref-version hg38 --data-sources-path /scratch/F0034WQ_temp/Funcotator_prepackaged_sources/funcotator_dataSources.v1.7.20200521s --output /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.RepeatM-f.funcotated.vcf --output-file-format VCF
+
+# Final callsets in MAF format
+apps/gatk-4.3.0.0/gatk Funcotator --variant /scratch/F0034WQ_temp/results/filtered-PASS.DP-20.AF-0.05.AD-5.major-contigs.RepeatM-f.vcf --reference /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa --ref-version hg38 --data-sources-path /scratch/F0034WQ_temp/Funcotator_prepackaged_sources/funcotator_dataSources.v1.7.20200521s --output /scratch/F0034WQ_temp/results/filtered_PDO_HN143_funcotated.maf --output-file-format MAF --annotation-override Tumor_Sample_Barcode:PDO_HN143 --annotation-override Center:PDO_HN143
+
+# Since "Tumor_Sample_Barcode" and "Center" fields will be filled with __UNKNOWN__, use --annotation-override to replace existing annotations of the given name with given values. Or --annotation-default to add the specified annotation to every annotated variant if some annotations are not already present.
+```
+

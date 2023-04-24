@@ -1,0 +1,222 @@
+---
+title: "Exome seq pre-processing"
+author: "Ji-Qing Chen"
+date: "2023-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Rfastp)
+```
+
+# Activate conda environment (in discovery)
+```{bash}
+source /optnfs/common/miniconda3/etc/profile.d/conda.sh
+
+conda activate mytest
+```
+
+______________________________________________________
+
+# Download reference (Only do it for the first time)
+```{bash}
+wget -P /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/ https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.fa.gz
+
+gunzip /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa.gz
+```
+
+# Create index file for the reference fasta file (Only do it for the first time)
+```{bash}
+# the output of this index file would be .fai, the same file name with .fai
+samtools faidx /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa
+```
+
+
+# Create dictionary of the reference (Only do it for the first time)
+```{bash}
+apps/gatk-4.3.0.0/gatk CreateSequenceDictionary R=/dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa O=/dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.dict
+
+# R : input reference file
+# O : Output; would be dictionary file with .dict extension; this file needs to be present in the same folder where we have the index file and reference file
+```
+
+# download known sites (variant sites) files for BQSR (base quality score recalibration) from GATK resource bundle in the same location where I have my reference files (Only do it for the first time)
+```{bash}
+wget -P /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/ https://storage.googleapis.com/genomics-public-data/resources/broad/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf
+
+# the Index for this VCF
+wget -P /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/ https://storage.googleapis.com/genomics-public-data/resources/broad/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf.idx
+```
+
+______________________________________________________
+
+# Set directory
+```{r}
+setwd("/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/Raw-data/RS-03472818_PDO_HN143") # do it at console
+```
+
+# basic QC and filter out low quality reads or trim --> using Rfastp.
+```{r}
+# create a report in R 
+json_report <- rfastp(read1 = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/Raw-data/RS-03472818_PDO_HN143/RS-03472818_HN143-PDO_RS-03452817_S26_R1_001.fastq.gz", read2 = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/Raw-data/RS-03472818_PDO_HN143/RS-03472818_HN143-PDO_RS-03452817_S26_R2_001.fastq.gz", outputFastq = "RS-03472818_rfastp")
+# [create following filea in the directory:
+# -- xx_R1.fastq.gz: FASTQ with poor quality reads filtered out
+# -- xx.html: HTML file contains a QC report
+# -- xx.json: JSON file with all the summary statistics
+# If you want to use specific adapters or quality thresholds --> ?rfastp; if you have paired end, use read2
+
+# Details before and after QC
+qcSummary(json_report)
+curvePlot(json_report) # base quality per base
+curvePlot(json_report, curves = "content_curves") # shows gc content per base
+## You don't want massive changes after filtering --> so should not have a massive shift
+```
+
+______________________________________________________
+
+# Map to reference using BWA-MEM
+```{bash}
+# BWA also indexes reference because it allows it to be more efficient to search the genome while performing the alignment
+
+# # BWA use index function to generate the index for reference
+bwa index /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa # (Only do it for the first time)
+# Outputs: hg38.fa.sa, .amb, .ann, .pac, .bwt were the files that bwa used for alignment.
+
+# BWA alignment (2hrs)
+bwa mem -t 4 -R "@RG\tID:RS03472818\tPL:ILLUMINA\tSM:RS03472818" /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa /dartfs-hpc/rc/home/q/f0034wq/RS-03472818_rfastp_R1.fastq.gz /dartfs-hpc/rc/home/q/f0034wq/RS-03472818_rfastp_R2.fastq.gz > /scratch/F0034WQ_temp/aligned_reads/RS_03472818.paired.sam
+# -t 4 : using 4 threads
+# since the resulting align reads, SAM or BAM, will be missing a read group. We will be providing the read group information here using -R
+# >: I want to output the align reads in the /dartfs-hpc/rc/home/q/f0034wq/aligned_reads folder
+```
+
+# View SAM file
+```{bash}
+samtools view /scratch/F0034WQ_temp/aligned_reads/RS_03472818.paired.sam | less
+
+# Look at the flag stat
+samtools flagstat /scratch/F0034WQ_temp/aligned_reads/RS_03472818.paired.sam
+
+# 112138973 + 0 in total (QC-passed reads + QC-failed reads)
+# 0 + 0 secondary
+# 92803 + 0 supplementary
+# 0 + 0 duplicates
+# 112079939 + 0 mapped (99.95% : N/A)
+# 112046170 + 0 paired in sequencing
+# 56023085 + 0 read1
+# 56023085 + 0 read2
+# 110988966 + 0 properly paired (99.06% : N/A)
+# 111954052 + 0 with itself and mate mapped
+# 33084 + 0 singletons (0.03% : N/A)
+# 539212 + 0 with mate mapped to a different chr
+# 373926 + 0 with mate mapped to a different chr (mapQ>=5)
+```
+
+______________________________________________________
+# Mark Duplicates and Sort - GATK4
+```{bash}
+# Flagging of the duplicate reads and as well as sorting the SAM files (10 mins)
+apps/gatk-4.3.0.0/gatk MarkDuplicatesSpark -I /scratch/F0034WQ_temp/aligned_reads/RS_03472818.paired.sam -O /scratch/F0034WQ_temp/aligned_reads/RS_03472818_sorted_dedup_reads.bam
+# -I: input, aligned reads - RS_03472807.paired.sam
+# -O: output, the deduplicated sorted reads
+
+# Look at the flag stat
+samtools flagstat /scratch/F0034WQ_temp/aligned_reads/RS_03472818_sorted_dedup_reads.bam
+
+# 112138973 + 0 in total (QC-passed reads + QC-failed reads)
+# 0 + 0 secondary
+# 92803 + 0 supplementary
+# 11403477 + 0 duplicates # How many reads that are marked as duplicates; the subsequent programs in gatk will ignore these many reads in the following analysis
+# 112079939 + 0 mapped (99.95% : N/A)
+# 112046170 + 0 paired in sequencing
+# 56023085 + 0 read1
+# 56023085 + 0 read2
+# 110988966 + 0 properly paired (99.06% : N/A)
+# 111954052 + 0 with itself and mate mapped
+# 33084 + 0 singletons (0.03% : N/A)
+# 539212 + 0 with mate mapped to a different chr
+# 373926 + 0 with mate mapped to a different chr (mapQ>=5)
+```
+
+______________________________________________________
+
+# Correct for base quality scores - Base quality recalibration
+
+# 1. Build the model (Machine Learning Model using the known variants)
+```{bash}
+# 38 mins
+apps/gatk-4.3.0.0/gatk BaseRecalibrator -I /scratch/F0034WQ_temp/aligned_reads/RS_03472818_sorted_dedup_reads.bam -R /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa --known-sites /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/Homo_sapiens_assembly38.dbsnp138.vcf -O /scratch/F0034WQ_temp/data/recal_data.table
+# -I : input, the deduplicated sorted align reads
+# -R : reference file
+# --known-sites : provide known sites
+# -O : output, a table
+
+# Once the recall data or table is created, we will use that to adjust the base quality score
+```
+
+# 2. Apply the model to adjust the base quality scores
+```{bash}
+# 23 mins
+apps/gatk-4.3.0.0/gatk ApplyBQSR -I /scratch/F0034WQ_temp/aligned_reads/RS_03472818_sorted_dedup_reads.bam -R /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa --bqsr-recal-file /scratch/F0034WQ_temp/data/recal_data.table -O /scratch/F0034WQ_temp/aligned_reads/RS_03472818_sorted_dedup_bqsr_reads.bam
+
+# the index for the RS_03472807_sorted_dedup_bqsr_reads.bam is generated (RS_03472807_sorted_dedup_bqsr_reads.bai)
+```
+
+______________________________________________________
+
+# Post Alignment QC
+
+## Collect Alignment & Insert Size Metrics
+```{bash}
+# 12 mins
+apps/gatk-4.3.0.0/gatk CollectAlignmentSummaryMetrics R=/dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa I=/scratch/F0034WQ_temp/aligned_reads/RS_03472818_sorted_dedup_bqsr_reads.bam O=/scratch/F0034WQ_temp/aligned_reads/alignment_metrics.txt
+
+# 5 mins
+apps/gatk-4.3.0.0/gatk CollectInsertSizeMetrics INPUT=/scratch/F0034WQ_temp/aligned_reads/RS_03472818_sorted_dedup_bqsr_reads.bam OUTPUT=/scratch/F0034WQ_temp/aligned_reads/insert_size_metrics.txt HISTOGRAM_FILE=/scratch/F0034WQ_temp/aligned_reads/insert_size_histogram.pdf
+# The histogram: can get a distribution of insert sizes across the reads, it provides us a way to validate the library construction
+```
+
+# We can also create a Multi-QC report to assess the alignment metrics and the insert size metrics
+```{bash}
+cd /scratch/F0034WQ_temp/aligned_reads
+
+# multiqc is a tool that aggregates and summarizes results from the text files or the log files that are generated from other bioinformatics tools. Here, we generated alignment metrics and insert metrics from using gatk functions. The information presented in each of these files can be summarized in a report using a tool like multiqc
+multiqc .
+# . meaning that we asked multiqc to search for the text files or the log files generated by other programs in the current folder.
+# multiqc generates an html report - Post alignment QC and can help us evaluate the alignment as well as the library construction.
+```
+
+______________________________________________________
+
+# Call Variants - gatk Mutect2 caller (without matching normal)
+```{bash}
+# 5 hours 20 mins !!
+apps/gatk-4.3.0.0/gatk Mutect2 -R /dartfs-hpc/rc/home/q/f0034wq/hg38_ref/hg38.fa -I /scratch/F0034WQ_temp/aligned_reads/RS_03472818_sorted_dedup_bqsr_reads.bam -germline-resource /scratch/F0034WQ_temp/Data_for_Mutect2/somatic_hg38_af_only_gnomad.hg38.vcf.gz -pon /dartfs-hpc/rc/home/q/f0034wq/Data_for_Mutect2/somatic_hg38_1000g_pon.hg38.vcf.gz -O /scratch/F0034WQ_temp/results/raw_variants.vcf
+
+# PoN and gnomAD were downloaded from https://console.cloud.google.com/storage/browser/gatk-best-practices/somatic-hg38%2F;tab=objects?prefix=&forceOnObjectsSortingFiltering=false
+
+# The gnomAD VCF is enormous because it contains a lot of INFO field annotations, none of which Mutect2 needs except for AF (allele frequency in the population).  The AF only gnomAD that are provide in the best practices google bucket is the gnomAD VCF with all extraneous annotations removed.  In principle you could use gnomAD with all the annotations, but it would waste a lot of CPU time parsing the VCF.
+
+# After downloading PoN and gnomAD, change the extension from .vcf to .vcf.gz
+
+# Also need to download their corresponding .vcf.gz.tbi file, and put them in the same folder. Make sure .vcf.gz and .vcf.gz.tbi have the same name 
+```
+
+# Why requires matched normal?
+```{r}
+# Mutect2 works primarily by contrasting the presence or absence of evidence for variation between two samples, the tumor and matched normal, from the same individual. The tool can run on unmatched tumors but this produces high rates of false positives. Technically speaking, somatic variants are both (i) different from the control sample and (ii) different from the reference. What this means is that if a site is variant in the control but in the somatic sample reverts to the reference allele, then it is not a somatic variant.
+
+# Compare Mutect2 with/without matched normal sample. After filtering for variants that have 'PASS' when running FilterMutectCalls, the overlap would be pretty low (~20-25% of each set).
+
+# That said, we do not recommend running the tool without a matched normal. Running without a normal will adversely affect your results. Specifically, even extremely rare germline mutations are more common than somatic mutations. So if you do not specify a normal, your call will be full of rare germline mutations that you can’t distinguish from the somatic mutations you are trying to identify.
+
+# Having a matched normal sample is recommended approach.
+```
+
+
+```{r}
+# Somatic variant callers surely can find germline mutations, there no out-of-the-box way to distinguish germline and somatic mutations on the level of calling. However, there are multiple approaches to distinguish the somatic and germline variants after genotype calling via comparison with common SNP and INDEL databases (e.g. dbSNP, Mills Gold, etc),  matched normal case (genotype calling performed on data obtained from healthy tissue of the same biological subject), etc.
+
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4561496/
+```
+

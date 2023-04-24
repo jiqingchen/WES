@@ -1,0 +1,393 @@
+---
+title: "Downstream_Analyses"
+author: "Ji-Qing Chen"
+date: "2023-03-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(maftools)
+library(tidyverse)
+library(ggplot2)
+```
+
+# Laod MAF file
+```{r}
+Merged_MAF <- read.maf("/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/merged_mafs_files_maftools.maf")
+# Silent variants: also called synonymous mutations (could use "vc_nonSyn" argument to get them)
+Merged_MAF_Tumor <- read.maf("/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/Tumor_merged_mafs_files_maftools.maf")
+Merged_MAF_PDO <- read.maf("/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/PDO_merged_mafs_files_maftools.maf")
+
+# re-level Tumor_Sample_Barcode
+Merged_MAF@data$Tumor_Sample_Barcode <- factor(Merged_MAF@data$Tumor_Sample_Barcode, levels=c("Tumor_01769", "PDO_01769", "Tumor_18243", "PDO_18243", "Tumor_HN85", "PDO_HN85", "Tumor_HN142", "PDO_HN142","Tumor_HN143","PDO_HN143","Tumor_RS4548","PDO_RS4548","Tumor_RS5650","PDO_RS5650"))
+```
+
+# How many mutations per sample
+```{r}
+sample_sum <- getSampleSummary(Merged_MAF)
+sample_sum2 <- sample_sum %>% column_to_rownames(., var = "Tumor_Sample_Barcode")
+sample_sum2 <- sample_sum2[c("Tumor_01769", "PDO_01769", "Tumor_18243", "PDO_18243", "Tumor_HN85", "PDO_HN85", "Tumor_HN142", "PDO_HN142","Tumor_HN143","PDO_HN143","Tumor_RS4548","PDO_RS4548","Tumor_RS5650","PDO_RS5650"),] %>%
+               rownames_to_column(., var = "Tumor_Sample_Barcode")
+write.csv(sample_sum2, file = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/Tables/sample_mutation_counts_summary.csv")
+
+# convert into table for ggplot
+var_to <- sample_sum$total
+names(var_to) <- sample_sum$Tumor_Sample_Barcode
+sample_sum <- dplyr::select(sample_sum, -total)
+melt_dat <- reshape2::melt(sample_sum, id = "Tumor_Sample_Barcode")
+melt_dat[1:3, ]
+
+# calculate proportion: count of mutation / total mutations for each sample
+melt_dat$totalVar <- var_to[match(melt_dat$Tumor_Sample_Barcode, names(var_to))]
+melt_dat$prop <- melt_dat$value/melt_dat$totalVar
+head(melt_dat)
+
+# re-ordered by factor levels
+melt_dat$Tumor_Sample_Barcode <- factor(melt_dat$Tumor_Sample_Barcode, levels=c("Tumor_01769", "PDO_01769", "Tumor_18243", "PDO_18243", "Tumor_HN85", "PDO_HN85", "Tumor_HN142", "PDO_HN142","Tumor_HN143","PDO_HN143","Tumor_RS4548","PDO_RS4548","Tumor_RS5650","PDO_RS5650"))
+
+# Make a bar chart - mutation counts
+ggplot(melt_dat,aes(x=Tumor_Sample_Barcode,y=value,fill=variable))+
+  geom_bar(stat='identity',position = 'stack')+
+  labs(x="",y="Mutation Counts",fill="") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90)) # 800 x 800
+
+# Make a bar chart - mutation proportions
+ggplot(melt_dat,aes(x=Tumor_Sample_Barcode,y=prop,fill=variable))+
+  geom_bar(stat='identity',position = 'stack')+
+  labs(x="",y="Mutation Proportion",fill="") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle = 90))
+
+# save melt_dat
+colnames(melt_dat) <- c("Tumor_Sample_Barcode", "mutation_type", "mutation_counts_for_specific_type", "Total_mutation_counts_for_specific_sample", "mutation_proportion_for_specific_type_sample")
+write.csv(melt_dat, file = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/Tables/sample_mutation_counts_proportion_summary.csv")
+```
+
+# How many mutations in each gene
+```{r}
+gene_sum <- getGeneSummary(Merged_MAF)
+gene_sum[1:2, ]
+
+write.csv(gene_sum, file = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/Tables/gene_mutation_counts_summary.csv")
+```
+
+# Compare mutation load against TCGA cohorts
+```{r}
+# tcgaCompare uses mutation load from TCGA MC3 for comparing mutation burden against 33 TCGA cohorts. (10x8)
+HNSCC_Tumor.mutload = tcgaCompare(maf = Merged_MAF_Tumor, cohortName = 'Tumor-HNSCC', logscale = TRUE)
+HNSCC_PDO.mutload = tcgaCompare(maf = Merged_MAF_PDO, cohortName = 'PDO-HNSCC', logscale = TRUE)
+```
+
+
+# Is there any mutation hotspots (means mutation in a given position detected in more samples than in other positions) in this dataset or in the given gene
+```{r}
+# Most activating mutations have mutation hotspots. however, loss of function mutations are usually with no mutation hotspot.
+
+# By default lollipopPlot uses the longest isoform of the gene.
+
+# Our target:
+Target <- c("TP53", "CDKN2A", "NOTCH1", "EGFR", "PIK3CA", "PTEN", "NSD1", "FAT1", "AJUBA", "HRAS", "KMT2D", "CASP8", "HLA-A", "TGFBR2", "FBXW7", "RB1", "PIK3R1", "TRAF3", "NFE2L2", "CUL3")
+
+# Plot (16 x 4)
+lollipopPlot(maf = Merged_MAF, gene = 'TP53', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8)
+lollipopPlot(maf = Merged_MAF, gene = 'CDKN2A', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8)
+lollipopPlot(maf = Merged_MAF, gene = 'NOTCH1', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8)
+lollipopPlot(maf = Merged_MAF, gene = 'PIK3CA', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8)
+lollipopPlot(maf = Merged_MAF, gene = 'NSD1', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8)
+lollipopPlot(maf = Merged_MAF, gene = 'FAT1', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8)
+lollipopPlot(maf = Merged_MAF, gene = 'AJUBA', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8)
+lollipopPlot(maf = Merged_MAF, gene = 'KMT2D', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8)
+lollipopPlot(maf = Merged_MAF, gene = 'TGFBR2', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8)
+
+# Extra genes: "FAT2" and "ERBB2"
+lollipopPlot(maf = Merged_MAF, gene = 'FAT2', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8)
+lollipopPlot(maf = Merged_MAF, gene = 'ERBB2', AACol = 'Protein_Change', labelPos = "all", labPosSize = 0.8) # no mutation
+```
+
+# Oncoplot (Interaction between mutations)
+```{r}
+# When mutations are send to interact, this means any concordance or exclusivity of two given gene mutations.
+
+# If two gene mutations are concordantly identified in the same patient, it indicates the two mutations could have a synergistic effects in cancer or they are in causality. Only when two genes get mutated, people can get cancer.
+
+# If two gene mutations are exclusive (i.e. not present in the same patient), this could suggest that they lead to similar consequences, therefore there is no selective pressure for both to mutate. These two genes' functions are similar so either one mutation would cause the tumor progression or cause disease. They don't need to mutate both of them.
+
+# The oncoplot allows comparison between genes to look for interactions between mutants. (10x10)
+oncoplot(maf = Merged_MAF, showTumorSampleBarcodes = T, SampleNamefontSize = 0.69, fontSize = 0.45, sampleOrder = c("Tumor_01769", "PDO_01769", "Tumor_18243", "PDO_18243", "Tumor_HN85", "PDO_HN85", "Tumor_HN142", "PDO_HN142","Tumor_HN143","PDO_HN143","Tumor_RS4548","PDO_RS4548","Tumor_RS5650","PDO_RS5650"), draw_titv = TRUE, pathways = 'auto')
+# If you are designing a cancer panel to detect the patients, like these 20 genes covered the 14 samples in the total 14 samples (title). If you use these 20 genes as a panel you can detect 100% of patients.
+
+# For target gene list (9x9)
+oncoplot(maf = Merged_MAF, showTumorSampleBarcodes = T, SampleNamefontSize = 0.65, fontSize = 0.75, sampleOrder = c("Tumor_01769", "PDO_01769", "Tumor_18243", "PDO_18243", "Tumor_HN85", "PDO_HN85", "Tumor_HN142", "PDO_HN142","Tumor_HN143","PDO_HN143","Tumor_RS4548","PDO_RS4548","Tumor_RS5650","PDO_RS5650"), genes = Target, draw_titv = TRUE, removeNonMutated = F)
+# If you use these 20 genes as a panel you can detect 92.86% of patients. Tumor_01769 didn't have a mutation on these genes
+
+
+# for tumor only (8x8)
+oncoplot(maf = Merged_MAF_Tumor, showTumorSampleBarcodes = T, SampleNamefontSize = 0.65, fontSize = 0.75, titleText = "Altered in 7 (100%) of 7 samples (Tumor).", draw_titv = TRUE, top = 25, sampleOrder = c("Tumor_01769", "Tumor_18243", "Tumor_HN85", "Tumor_HN142", "Tumor_HN143","Tumor_RS4548","Tumor_RS5650"))
+
+# for PDO only (8x8)
+gene_sum_PDO <- getGeneSummary(Merged_MAF_PDO)
+target_PDO <- append(as.character(gene_sum_PDO$Hugo_Symbol[1:19]),"TP53")
+oncoplot(maf = Merged_MAF_PDO, showTumorSampleBarcodes = T, SampleNamefontSize = 0.65, fontSize = 0.75, titleText = "Altered in 7 (100%) of 7 samples (PDO).", draw_titv = TRUE, top = 25, sampleOrder = c("PDO_01769", "PDO_18243", "PDO_HN85", "PDO_HN142","PDO_HN143","PDO_RS4548","PDO_RS5650"), genes = target_PDO)
+
+# target genes in both sample type (11 x 6)
+Target_ordered <- c("TP53", "KMT2D", "NOTCH1", "FAT1", "TGFBR2", "CDKN2A", "NSD1", "AJUBA", "PIK3CA", "EGFR", "PTEN", "HRAS", "CASP8", "HLA-A", "FBXW7", "RB1", "PIK3R1", "TRAF3", "NFE2L2", "CUL3")
+coOncoplot(m1 = Merged_MAF_Tumor, m2 = Merged_MAF_PDO, m1Name = 'Tumor', m2Name = 'PDO', genes = Target_ordered, removeNonMutated = F, showSampleNames = T, barcode_mar = 6, sampleOrder1 = c("Tumor_01769", "Tumor_18243", "Tumor_HN85", "Tumor_HN142", "Tumor_HN143","Tumor_RS4548","Tumor_RS5650"), sampleOrder2 = c("PDO_01769", "PDO_18243", "PDO_HN85", "PDO_HN142","PDO_HN143","PDO_RS4548","PDO_RS5650"))
+
+# Multi_Hit are those genes which are mutated more than once in the same sample.
+```
+
+## Pathway Analysis
+
+# OncogenicPathways: calculate mutations detected in each pathway and the fraction of samples affected (Any enriched pathways?)
+```{r}
+# 4x8
+OncogenicPathways(maf = Merged_MAF)
+# Ex: For NRF2 pathway, there are total 3 genes in this pathway (N). And only 1 gene (n_affected_genes) mutation was detected in 4 samples (Mutated_samples). So there is only 0.2857143 samples (Fraction_mutated_samples) affected. 1 out of 3 genes was mutated, and there were 4 samples in the out of 14 samples were affected.
+
+OncogenicPathways(maf = Merged_MAF_Tumor)
+OncogenicPathways(maf = Merged_MAF_PDO)
+```
+
+# PlotOncogenicPathways: make a waterfall plot for a given pathway (Mutations enriched in pathways?)
+```{r}
+#6 x 8
+# Since we know the RTK-RAS pathway would be an important pathway (based on Fraction of samples affected) in the HNSCC, we can use PlotOncogenicPathways.
+PlotOncogenicPathways(maf = Merged_MAF, pathways = "RTK-RAS", showTumorSampleBarcodes = T)
+# Trend from RASGRP3 to KRAS: they are mutually exclusive. That means each one mutation could be enough to activate the RTK-RAS pathway. So either one mutation can identify either one mutation.
+
+PlotOncogenicPathways(maf = Merged_MAF, pathways = "PI3K", showTumorSampleBarcodes = T)
+PlotOncogenicPathways(maf = Merged_MAF, pathways = "TP53", showTumorSampleBarcodes = T)
+```
+
+# Somatic Interactions: Mutually exclusive or co-occurring set of genes (using pair-wise Fisher’s Exact test)
+```{r}
+# all samples
+somaticInteractions(maf = Merged_MAF, pvalue = c(0.05, 0.1), fontSize = 0.67)
+
+# Tumor tissue only
+somaticInteractions(maf = Merged_MAF_Tumor, pvalue = c(0.05, 0.1), fontSize = 0.67)
+
+# PDO only
+somaticInteractions(maf = Merged_MAF_PDO, pvalue = c(0.05, 0.1), fontSize = 0.67)
+# 8 x 6
+```
+
+# Detecting cancer driver genes based on positional clustering
+```{r}
+# Concept is based on the fact that most of the variants in cancer causing genes are enriched at few specific loci (aka hot-spots).
+
+# all samples
+HNSCC.sig = oncodrive(maf = Merged_MAF, AACol = 'Protein_Change')
+head(HNSCC.sig)
+plotOncodrive(res = HNSCC.sig, useFraction = TRUE, labelSize = 0.5) # No fdr < 0.05 so no plot
+
+# Tumor tissue only
+HNSCC_Tumor.sig = oncodrive(maf = Merged_MAF_Tumor, AACol = 'Protein_Change')
+head(HNSCC_Tumor.sig)
+plotOncodrive(res = HNSCC_Tumor.sig, useFraction = TRUE, labelSize = 0.5) # No fdr < 0.05 so no plot
+
+# PDO only
+HNSCC_PDO.sig = oncodrive(maf = Merged_MAF_PDO, AACol = 'Protein_Change')
+head(HNSCC_PDO.sig)
+plotOncodrive(res = HNSCC_PDO.sig, useFraction = TRUE, labelSize = 0.5) # No fdr < 0.05 so no plot
+```
+
+# Comparing two cohorts (Tumor vs PDO)
+```{r}
+# Cancers differ from each other in terms of their mutation pattern. We can compare two different cohorts to detect such differentially mutated genes.
+# mafComapre(): performs fisher test on all genes between two cohorts to detect differentially mutated genes.
+Tumor.vs.PDO <- mafCompare(m1 = Merged_MAF_Tumor, m2 = Merged_MAF_PDO, m1Name = 'Tumor', m2Name = 'PDO', minMut = 5)
+print(Tumor.vs.PDO)
+Compare_2_cohorts <- Tumor.vs.PDO$results
+write.csv(Compare_2_cohorts, file = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/Tables/Compare_2_cohorts.csv")
+# minMut: Considering only genes which are mutated in at-least in 5 samples in one of the cohort to avoid bias due to genes mutated in single sample.
+
+# Visualization
+forestPlot(mafCompareRes = Tumor.vs.PDO, pVal = 0.1) # No differetially mutated genes found !
+
+coBarplot(m1 = Merged_MAF_Tumor, m2 = Merged_MAF_PDO, m1Name = "Tumor", m2Name = "PDO", pctSize = 0.3, geneSize = 0.5)
+```
+
+# Drug-Gene Interactions (checks for drug–gene interactions and gene druggability information compiled from Drug Gene Interaction database.)
+```{r}
+# Drug Gene Interaction database: https://www.dgidb.org/
+dgi = drugInteractions(maf = Merged_MAF, fontSize = 0.75)
+# plot shows potential druggable gene categories along with upto top 5 genes involved in them.
+dgi_Tumor = drugInteractions(maf = Merged_MAF_Tumor, fontSize = 0.75)
+dgi_PDO = drugInteractions(maf = Merged_MAF_PDO, fontSize = 0.75)
+
+# For target gene list
+dgi_target = drugInteractions(maf = Merged_MAF, fontSize = 0.75, genes = Target)
+```
+
+## For some diseases, such as oral cancer, they are induced by sever inflammation or something so we would expect their mutation patterns are very complicated. As a result, we can not identify any hotspot so we have to use another strategy to identify mutation patterns. So we use mutational signatures to find mutation patterns.
+
+## Mutational signatures mean the patterns of trinucleotide substitution. The pattern may reflect exposure of spontaneous/enzymatic deamination and defect of DNA repair, etc. It is useful for getting information if you don't find any hotspot mutation.
+
+# Evaluate single-nucleotide substitution
+```{r}
+# Ti: Transitions are single nucleotide variations [A <-> G ; C <-> T]
+# Tv: Transversions are single nucleotide variations [A <-> C ; A <-> T ; G <-> C ; G <-> T]
+HNSCC.titv = titv(maf = Merged_MAF, plot = FALSE, useSyn = TRUE)
+plotTiTv(res = HNSCC.titv, showBarcodes = T, textSize = 0.6)
+```
+
+# Cancer genomes, especially solid tumors are characterized by genomic loci with localized hyper-mutations
+```{r}
+# Such hyper mutated genomic regions can be visualized by plotting inter variant distance on a linear genomic scale.
+rainfallPlot(maf = Merged_MAF, detectChangePoints = TRUE, pointSize = 0.4, ref.build = "hg38", tsb = "PDO_01769")
+# detectChangePoints: detects genomic change points where potential kataegis are formed; highlights regions where potential changes in inter-event distances are located.
+# “Kataegis” are defined as those genomic segments containing six or more consecutive mutations with an average inter-mutation distance of less than or equal to 1,00 bp
+```
+
+# Calculate Trinucleotide Substitution Pattern
+```{r}
+# Extract single 5' and 3' bases flanking the mutated site for de-novo signature analysis.
+library(BSgenome.Hsapiens.UCSC.hg38, quietly = TRUE)
+HNSCC.tnm = trinucleotideMatrix(maf = Merged_MAF,
+                                ref_genome = "BSgenome.Hsapiens.UCSC.hg38")
+dim(HNSCC.tnm$nmf_matrix)
+# 14 samples. There are a total 96 of the nucleotide substitutions
+
+# Take one sample for the example:
+HNSCC.tnm$nmf_matrix[1,]
+# this sample contains 10 C to A mutations between A and A
+
+# Take one sample and convert its trinucleotide pattern into a bar chart
+tarSam_triNuc <- HNSCC.tnm$nmf_matrix["Tumor_01769", ]
+tarSam_triNuc[1:2]
+yd <- data.frame(triNuc = names(tarSam_triNuc), count = tarSam_triNuc, stringsAsFactors = FALSE)
+yd$cat <- gsub("(.*)\\[(.*)\\](.*)", "\\2", yd$triNuc)
+yd$num <- seq(1, length(yd$triNuc))
+ggplot(yd,aes(x=num,y=count,fill=cat))+
+  geom_bar(stat='identity')+
+  labs(x="",y="Counts",fill="")+
+  ggtitle("Tumor_01769") +
+  theme_classic() +
+  theme(axis.text.x=element_blank())
+# Most of the mutations are C to T
+
+# If we want to know this pattern, we have to compare to the COSMIC database.
+```
+
+# Before comparing to the database, we have to estimate the total number of signatures identified in this cohort.
+```{r}
+library('NMF')
+HNSCC.sign <- estimateSignatures(mat = HNSCC.tnm,
+                                 nTry = 6, # how many signatures that we want to test it
+                                 pConstant = 0.1, # A small positive value to add to the matrix.
+                                 parallel = 1)
+# Cophenetic correlation, which represents how faithfully a clustering results represent the original data, would be used to estimate how many signatures could be identified in this dataset.
+# if we separat it into 2, it can describe 98.5%, n = 3 can describe 100%
+# like elbow plot, the optimal value would be the number where cophenetic number decreasing most significantly (n = 3)
+```
+
+# Extract Signatures based on cophenetic plot
+```{r}
+# According to the Cophenetic metric, the optimal number of signatures = 3
+HNSCC.sig.ext <- extractSignatures(mat = HNSCC.tnm, 
+                                   n = 3,
+                                   pConstant = 0.1,
+                                   parallel = 1)
+HNSCC.sig.ext$signatures[1:5,] # use for mapping to mutational signature database
+# We got for each signature they have a proportion of the trinucleotide substituion pattern.
+# based on this metric, we can compare to the COSMIC database
+```
+
+# Map to mutational signatures databases - COSMIC database
+```{r}
+# Calculate the similarity between our signatures and their signatures recorded in the COSMIC database
+HNSCC.og30.cosm = compareSignatures(nmfRes = HNSCC.sig.ext,
+                                   sig_db = "legacy")
+HNSCC.og30.cosm$cosine_similarities
+# For signature 1, it is mostly correlate to the COSMIC signature 4; and the signature 2 is most likely the COSMIC signature 1.
+
+# Visualization
+pheatmap::pheatmap(mat = HNSCC.og30.cosm$cosine_similarities, cluster_rows = FALSE) # 9x6
+
+# plots signature pattern and annotate basing on COSMIC database (Top: Signature 1; Bottom: Signature 3)
+plotSignatures(nmfRes = HNSCC.sig.ext, 
+               title_size = 1.2,
+               contributions = FALSE,
+               show_title = TRUE,
+               sig_db = 'legacy')
+# 9x6
+```
+
+# Map the signatures to SBS database
+```{r}
+HNSCC.sign.sbs = compareSignatures(nmfRes = HNSCC.sig.ext, sig_db = "SBS")
+HNSCC.sign.sbs$cosine_similarities[, 1:5]
+
+# Visualization
+pheatmap::pheatmap(mat = HNSCC.sign.sbs$cosine_similarities, cluster_rows = FALSE) # 9x6
+
+# plots signature pattern and annotate basing on SBS database (Top: Signature 1; Bottom: Signature 3)
+plotSignatures(nmfRes = HNSCC.sig.ext, 
+               title_size = 1.2,
+               contributions = FALSE,
+               show_title = TRUE,
+               sig_db = 'SBS')
+# 9x6
+```
+
+# Display mutational signatures exposure in each sample
+```{r}
+# For each sample, they were exposed to which signature.
+#par(mar=c(0,0,0,0))
+plotSignatures(nmfRes = HNSCC.sig.ext,
+               title_size = 0.8,
+               contributions = TRUE,
+               show_title = TRUE,
+               #show_barcodes = T,
+               #font_size = 0.6,
+               patient_order = c("Tumor_01769", "PDO_01769", "Tumor_18243", "PDO_18243", "Tumor_HN85", "PDO_HN85", "Tumor_HN142", "PDO_HN142","Tumor_HN143","PDO_HN143","Tumor_RS4548","PDO_RS4548","Tumor_RS5650","PDO_RS5650")
+               )
+```
+
+# We can group samples (k-mean clustering) based on the exposure of mutational signatures (Enrichment analysis)
+```{r}
+# Assign dominate signatures based on k-mean clustering
+# Mutations in samples with different signatures
+HNSCC.se = signatureEnrichment(maf = Merged_MAF, 
+                              sig_res = HNSCC.sig.ext)
+# The first category, these patients have more
+
+# Genes mutated in samples with particular mutational signature. If there any gene mutation associated with these categories. So we can compare the gene mutation occurs in one signature than other signatures.
+HNSCC.se$groupwise_comparision[1:2, ]
+plotEnrichmentResults(enrich_res = HNSCC.se, pVal = 0.05) # No significant associations found at p-value < 0.05 and OR < 1
+
+
+# Tumor
+HNSCC.tnm_Tumor = trinucleotideMatrix(maf = Merged_MAF_Tumor,
+                                      ref_genome = "BSgenome.Hsapiens.UCSC.hg38")
+HNSCC.sign_Tumor <- estimateSignatures(mat = HNSCC.tnm_Tumor,
+                                       nTry = 6, # how many signatures that we want to test it
+                                       pConstant = 0.1, # A small positive value to add to the matrix.
+                                       parallel = 1)
+HNSCC.sig.ext_Tumor <- extractSignatures(mat = HNSCC.tnm_Tumor, 
+                                         n = 3,
+                                         pConstant = 0.1,
+                                         parallel = 1)
+HNSCC.se_Tumor = signatureEnrichment(maf = Merged_MAF_Tumor, 
+                                     sig_res = HNSCC.sig.ext_Tumor)
+plotEnrichmentResults(enrich_res = HNSCC.se_Tumor, pVal = 0.05) # No significant associations found at p-value < 0.05 and OR < 1
+
+# PDO
+HNSCC.tnm_PDO = trinucleotideMatrix(maf = Merged_MAF_PDO,
+                                    ref_genome = "BSgenome.Hsapiens.UCSC.hg38")
+HNSCC.sign_PDO <- estimateSignatures(mat = HNSCC.tnm_PDO,
+                                     nTry = 6, # how many signatures that we want to test it
+                                     pConstant = 0.1, # A small positive value to add to the matrix.
+                                     parallel = 1)
+HNSCC.sig.ext_PDO <- extractSignatures(mat = HNSCC.tnm_PDO, 
+                                       n = 3,
+                                       pConstant = 0.1,
+                                       parallel = 1)
+HNSCC.se_PDO = signatureEnrichment(maf = Merged_MAF_PDO, 
+                                   sig_res = HNSCC.sig.ext_PDO)
+plotEnrichmentResults(enrich_res = HNSCC.se_PDO, pVal = 0.05) # No significant associations found at p-value < 0.05 and OR < 1
+```
+

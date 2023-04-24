@@ -1,0 +1,137 @@
+---
+title: "Generate_Summaries"
+author: "Ji-Qing Chen"
+date: "2023-03-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# extract specific INFO and generate plots summarizing basic QC thresholds (DP, AF, AD)
+```{bash}
+bcftools query -f '[%CHROM\t%POS\t%AD\t%AF\t%DP\t%INFO/POPAF]\n' /scratch/F0034WQ_temp/results/filtered-PASS.vcf > /scratch/F0034WQ_temp/results/metrics-tmp.txt
+```
+
+# add header line back into file
+```{bash}
+echo -e "CHROM\tPOS\tAD\tAF\tDP\tPOPAF" | cat - /scratch/F0034WQ_temp/results/metrics-tmp.txt > /scratch/F0034WQ_temp/results/filtered-PASS-metrics.txt
+
+# remove temporary file
+rm -rf /scratch/F0034WQ_temp/results/metrics-tmp.txt
+```
+
+# Merge MAF files
+```{r}
+###reading mutiple .maf files as a large list
+maf_files = list.files(path = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAFs", pattern = "*.\\.maf$", full.names = TRUE)
+
+list.all.maf.files <- lapply(maf_files,function(i){
+  read.delim(i, sep = "\t", header = TRUE, fill = TRUE, comment.char = "#")
+}) 
+
+###merging the all the .maf files
+merged_mafs_files = maftools::merge_mafs(list.all.maf.files)
+
+###check to see if everything is okay
+
+# generate a merged maf file
+maftools::write.mafSummary(maf = merged_mafs_files, basename = "merged_mafs_files")
+
+# a matrix, count of mutation classes in each sample
+getSampleSummary(merged_mafs_files)
+
+# a matrix, count of mutation classes in each gene
+getGeneSummary(merged_mafs_files)
+
+# generate summary plot
+ppi=300
+png(paste0("maf-summary.png"), width=8*ppi, height=10*ppi, res=ppi)
+plotmafSummary(maf = merged_mafs_files, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE, showBarcodes = T, textSize = 0.65)
+dev.off()
+
+ppi=300
+png(paste0("maf-summary_top15.png"), width=8*ppi, height=7*ppi, res=ppi)
+plotmafSummary(maf = merged_mafs_files, rmOutlier = TRUE, addStat = 'median', dashboard = TRUE, titvRaw = FALSE, top = 15, showBarcodes = T, textSize = 0.65)
+dev.off()
+```
+
+# Generate .csv file
+```{r}
+maf = read.maf(maf = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/merged_mafs_files_maftools.maf",vc_nonSyn = c("Frame_Shift_Del", "Frame_Shift_Ins", "Splice_Site", 
+                 "Translation_Start_Site","Nonsense_Mutation", "Nonstop_Mutation", 
+                 "In_Frame_Del","In_Frame_Ins", "Missense_Mutation", 
+                 "RNA", "Intron", "IGR", "3'UTR", "5'Flank", "Silent", "5'UTR"))
+
+cols <- c("Hugo_Symbol",  "Entrez_Gene_Id", "NCBI_Build", "Chromosome", "Start_Position", "End_Position", "Strand",
+  "Variant_Classification", "Variant_Type", "Reference_Allele", "Tumor_Seq_Allele1",  "Tumor_Seq_Allele2",
+  "dbSNP_RS", "dbSNP_Val_Status", "Genome_Change",  "Annotation_Transcript",  "Transcript_Strand",  "Transcript_Exon",
+  "cDNA_Change",  "Codon_Change", "Protein_Change", "Refseq_mRNA_Id", "Refseq_prot_Id", "Description",
+  "tumor_f",  "t_alt_count",  "t_ref_count",  "n_alt_count",  "ClinVar_VCF_ID", "HGNC_Chromosome", "DP")
+
+maf_sub <- as.data.frame(maf@data)
+maf_sub <- maf_sub[, c(colnames(maf@data) %in% cols)]
+
+write.csv(maf_sub, file = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAF_summary/somatic_calls.csv")
+```
+
+# plot script for PASS-variants summaries (each sample individually)
+```{r}
+x <- read.table("/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/Raw-data/RS-03472805_Tumor_01769/filtered-PASS-metrics.txt", sep="\t", stringsAsFactors = FALSE, header=T)
+
+ppi=300
+png("Tumor_01769-PASS-metrics-summary.png", width=8*ppi, height=8*ppi, res=ppi)
+par(mfrow=c(2,2))
+
+hist(as.numeric(x$DP), main = "Read depth", xlab = "Reads", breaks = 50, col = "chartreuse4")
+abline(v=10, lty=2, lwd = 1.5, col="red")
+
+hist(as.numeric(x$AF), main = "Allele Freq. for alt allele", col = "darkorange1",
+     xlab = "Alt allele freq.", breaks = 50, xlim=c(0,1))
+abline(v=0.05, lty=2, lwd = 1.5, col="red")
+
+hist(as.numeric(sapply(x$AD, function(x) strsplit(x, ",")[[1]][2])), breaks = 50, col = "cornflowerblue",
+     main = "Allele depth for alt allele", xlab = "Reads")
+abline(v=5, lty=2, lwd = 1.5, col="red")
+
+plot(as.numeric(sapply(x$AD, function(x) strsplit(x, ",")[[1]][2])), col = "cornflowerblue",
+     main = "Allele depth for alt allele", xlab = "Variant", ylab = "Reads", las=1, cex = 0.8)
+abline(h=5, lty=2, lwd = 1.5, col="red")
+
+dev.off()
+```
+
+# Generate Merge MAF files for tumor tissue only
+```{r}
+maf_files = list.files(path = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAFs/Tumor", pattern = "*.\\.maf$", full.names = TRUE)
+
+list.all.maf.files <- lapply(maf_files,function(i){
+  read.delim(i, sep = "\t", header = TRUE, fill = TRUE, comment.char = "#")
+}) 
+
+###merging the all the .maf files
+merged_mafs_files = maftools::merge_mafs(list.all.maf.files)
+
+###check to see if everything is okay
+
+# generate a merged maf file
+maftools::write.mafSummary(maf = merged_mafs_files, basename = "Tumor_merged_mafs_files")
+```
+
+# Generate Merge MAF files for PDO only
+```{r}
+maf_files = list.files(path = "/Users/chenjiqing/Public/RNA-seq/Exome_and_organoid/Exome/MAFs/PDO", pattern = "*.\\.maf$", full.names = TRUE)
+
+list.all.maf.files <- lapply(maf_files,function(i){
+  read.delim(i, sep = "\t", header = TRUE, fill = TRUE, comment.char = "#")
+}) 
+
+###merging the all the .maf files
+merged_mafs_files = maftools::merge_mafs(list.all.maf.files)
+
+###check to see if everything is okay
+
+# generate a merged maf file
+maftools::write.mafSummary(maf = merged_mafs_files, basename = "PDO_merged_mafs_files")
+```
